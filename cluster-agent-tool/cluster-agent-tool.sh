@@ -245,13 +245,15 @@ function setusupthekubeconfig() {
         if [ "$?" != "0" ]; then
             grecho "Failed to get SSL directory prefix in order to generate the KUBECONFIG, aborting script!  If you know what the prefix is you can manually pass it with -z.  This is usually /etc/kubernetes/."
             exit 1
+        else
+           SSLDIRPREFIX="/host${SSLDIRPREFIX}"
         fi
     else
-        SSLDIRPREFIX=${MANUALSSLPREFIX}
+        SSLDIRPREFIX=/host${MANUALSSLPREFIX}
     fi
     cp -arfv "${SSLDIRPREFIX}"/ssl/kubecfg-kube-node.yaml "${TMPDIR}"/kubecfg-kube-node.yaml
-    if [ -d "/opt/rke/etc/kubernetes/" ]; then
-        sed -r -i 's,/etc/kubernetes,/opt/rke/etc/kubernetes/,g' "${TMPDIR}"/kubecfg-kube-node.yaml
+    if [ -d "/host/opt/rke/etc/kubernetes/" ]; then
+        sed -r -i 's,/etc/kubernetes,/host/opt/rke/etc/kubernetes/,g' "${TMPDIR}"/kubecfg-kube-node.yaml
     fi
     K_RESULT=$(kubectl --insecure-skip-tls-verify --kubeconfig "${TMPDIR}"/kubecfg-kube-node.yaml get configmap -n kube-system full-cluster-state -o json 2>&1)
     if [ "$?" == "0" ]; then
@@ -302,131 +304,12 @@ function setusupthekubeconfig() {
     fi
 
 }
-function download() {
-    if [[ "${DOWNLOADCMD}" == "wget" ]]; then
-        wget "$*"
-    else
-        curl -LO "$*"
-    fi
-}
 
-function curlcmd() {
-    if [[ "${CURLCMD}" == "curl" ]]; then
-        curl "$@"
-    else
-        docker run --rm -ti patrick0057/curl "$@" | tr -d '\r'
-    fi
-}
 if [[ "${PASSWORD}" == "" ]] && [[ -z "${LOGINTOKEN}" ]]; then
     grecho "You did not specify a password and option -t was not used to supply a Bearer Token."
     echo
     helpmenu
 fi
-
-
-if ! hash curl 2>/dev/null && [[ "${INSTALL_MISSING_DEPENDENCIES}" == "yes" ]]; then
-    if [[ -f /etc/redhat-release ]]; then
-        export OS=redhat
-        grecho "You are using Red Hat based linux, installing curl with yum since you passed -y"
-        yum install -y curl
-        export CURLCMD='curl'
-    elif [[ -f /etc/lsb_release ]]; then
-        export OS=ubuntu
-        grecho "You are using Debian/Ubuntu based linux, installing curl with apt since you passed -y"
-        apt update && apt install -y curl
-        export CURLCMD='curl'
-    elif hash docker 2>/dev/null && [[ ! -f /etc/lsb_release ]] && [[ ! -f /etc/lsb_release ]]; then
-        grecho "No curl executable found but we can run curl from a docker container instead and use wget for downloads."
-        export CURLCMD='docker run --rm -ti patrick0057/curl'
-        export DOWNLOADCMD='wget'
-    fi
-else
-    export CURLCMD='curl'
-fi
-if ! hash curl 2>/dev/null; then
-    if hash docker 2>/dev/null; then
-        grecho "No curl executable found but we can run curl from a docker container instead and use wget for downloads."
-        export CURLCMD='docker run --rm -ti patrick0057/curl'
-        export DOWNLOADCMD='wget'
-    else
-        grecho '!!!curl was not found!!!'
-        grecho 'Please install curl if you want to automatically install missing dependencies'
-        exit 1
-    fi
-fi
-
-if ! hash wget 2>/dev/null && [[ "${DOWNLOADCMD}" == "wget" ]]; then
-    grecho '!!!wget was not found!!!'
-    grecho 'Sorry no auto install for this one, please use your package manager.'
-    exit 1
-fi
-#Install kubectl if we're applying the cluster yaml and if we have passed -y to automatically install dependencies
-if ! hash kubectl 2>/dev/null && [[ "${APPLY_YAML}" == "yes" ]]; then
-    if [ "${INSTALL_MISSING_DEPENDENCIES}" == "yes" ] && [ "${OSTYPE}" == "linux-gnu" ]; then
-        recho "Installing kubectl..."
-        download "https://storage.googleapis.com/kubernetes-release/release/$(curlcmd -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
-        if [ "${LOCALBINARY}" != "yes" ]; then
-            install -o root -g root -m 755 kubectl /bin/kubectl
-        else
-            install -o root -g root -m 755 kubectl ${TMPDIR}/kubectl
-            grecho to use kubectl from tmp, you need to export ${TMPDIR} into your path as shown below.
-            grecho "export PATH=\${PATH}:${TMPDIR}"
-        fi
-    else
-        grecho "!!!kubectl was not found!!!"
-        grecho "!!!download and install with:"
-        grecho "Linux users (Run script with option -y to install automatically):"
-        grecho "curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
-        grecho "chmod +x ./kubectl"
-        grecho "mv ./kubectl /bin/kubectl"
-        exit 1
-    fi
-fi
-
-if ! hash jq 2>/dev/null; then
-    if [ "${INSTALL_MISSING_DEPENDENCIES}" == "yes" ] && [ "${OSTYPE}" == "linux-gnu" ]; then
-        recho "Installing jq..."
-        download https://github.com/patrick0057/jq/releases/download/jq-1.6/jq-linux64
-        if [ "${LOCALBINARY}" != "yes" ]; then
-            install -o root -g root -m 755 jq-linux64 /bin/jq
-        else
-            install -o root -g root -m 755 jq-linux64 ${TMPDIR}/jq
-            grecho to use jq from tmp, you need to export ${TMPDIR} into your path as shown below.
-            grecho "export PATH=\${PATH}:${TMPDIR}"
-        fi
-
-    else
-        grecho '!!!jq was not found!!!'
-        grecho "!!!download and install with:"
-        grecho "Linux users (Run script with option -y to install automatically):"
-        grecho "curl -L -O https://github.com/patrick0057/jq/releases/download/jq-1.6/jq-linux64"
-        grecho "chmod +x jq-linux64"
-        grecho "mv jq-linux64 /bin/jq"
-        exit 1
-    fi
-fi
-if ! hash base64 2>/dev/null; then
-    if [ "${INSTALL_MISSING_DEPENDENCIES}" == "yes" ]; then
-        echo '!!!base64 was not found!!!'
-        download https://github.com/patrick0057/kubecert/raw/master/base64
-        chmod +x base64
-        mv base64 "$TMPDIR"
-    else
-        echo '!!!base64 was not found!!!'
-        echo 'You can download it from https://github.com/patrick0057/kubecert/raw/master/base64 manually and put it in your path or pass -y to auto install.'
-        exit 1
-    fi
-fi
-DEPENDENCIES="sed grep ip tr date cut"
-for CMD in ${DEPENDENCIES}; do
-    hash "${CMD}" 2>/dev/null
-    if [[ "$?" == "1" ]]; then
-        grecho "${CMD} was not found, please install with your package manager"
-        EXIT="exit 1"
-    fi
-    #Quit script if any other above matched, but let it finish reporting before doing so.
-    ${EXIT}
-done
 
 #Auto set RANCHER_USERNAME if none was specified
 if [[ "${RANCHER_USERNAME}" == "" ]]; then
@@ -461,7 +344,7 @@ CATTLE_SERVER=$(sed 's:/*$::' <<<$CATTLE_SERVER)
 
 #Get a temporary login token
 if [[ ${LOGINTOKEN// /} == "" ]]; then
-    LOGINTOKEN=$(curlcmd -k -s ''${CATTLE_SERVER}'/v3-public/localProviders/local?action=login' -H 'content-type: application/json' --data-binary '{"username":'\"${RANCHER_USERNAME}\"',"password":'\"${PASSWORD}\"',"ttl":'${TOKEN_TTL}'}' | jq -r .token)
+    LOGINTOKEN=$(curl -k -s ''${CATTLE_SERVER}'/v3-public/localProviders/local?action=login' -H 'content-type: application/json' --data-binary '{"username":'\"${RANCHER_USERNAME}\"',"password":'\"${PASSWORD}\"',"ttl":'${TOKEN_TTL}'}' | jq -r .token)
     checkpipecmd "Unable to get LOGINTOKEN, did you use the correct username and password?"
     checkcurlreturn "${LOGINTOKEN}"
     checknullvar "${LOGINTOKEN}" "Unable to get LOGINTOKEN, did you use the correct username and password?" "exit1"
@@ -469,7 +352,7 @@ fi
 
 if [[ "${CLUSTERID}" == "" ]]; then
     #store /v3/clusters output
-    CLUSTERS=$(curlcmd -k -s "${CATTLE_SERVER}/v3/clusters" -H "content-type: application/json" -H "Authorization: Bearer ${LOGINTOKEN}")
+    CLUSTERS=$(curl -k -s "${CATTLE_SERVER}/v3/clusters" -H "content-type: application/json" -H "Authorization: Bearer ${LOGINTOKEN}")
     checkpipecmd "Unable to load ${CATTLE_SERVER}/v3/clusters on my own."
     checkcurlreturn "${CLUSTERS}"
     #Store nodeId
@@ -480,7 +363,7 @@ if [[ "${CLUSTERID}" == "" ]]; then
     #Start checking local cluster for the IP
     #internal ip check
     if [[ ${NODEID// /} == "" ]]; then
-        LOCAL_CLUSTER=$(curlcmd -k -s "${CATTLE_SERVER}/v3/clusters/local/nodes" -H "content-type: application/json" -H "Authorization: Bearer ${LOGINTOKEN}")
+        LOCAL_CLUSTER=$(curl -k -s "${CATTLE_SERVER}/v3/clusters/local/nodes" -H "content-type: application/json" -H "Authorization: Bearer ${LOGINTOKEN}")
         NODEID=$(echo $LOCAL_CLUSTER | jq -r '.data[]?.ipAddress' | grep -i "${DEFAULT_IP}")
         if [[ ${NODEID// /} == "${DEFAULT_IP}" ]]; then
             grecho "Rancher local cluster detected, setting CLUSTERID to local."
@@ -489,7 +372,7 @@ if [[ "${CLUSTERID}" == "" ]]; then
     fi
     #external ip check
     if [[ ${NODEID// /} == "" ]]; then
-        LOCAL_CLUSTER=$(curlcmd -k -s "${CATTLE_SERVER}/v3/clusters/local/nodes" -H "content-type: application/json" -H "Authorization: Bearer ${LOGINTOKEN}")
+        LOCAL_CLUSTER=$(curl -k -s "${CATTLE_SERVER}/v3/clusters/local/nodes" -H "content-type: application/json" -H "Authorization: Bearer ${LOGINTOKEN}")
         NODEID=$(echo $LOCAL_CLUSTER | jq -r '.data[]?.externalIpAddress' | grep -i "${DEFAULT_IP}")
         if [[ ${NODEID// /} == "${DEFAULT_IP}" ]]; then
             grecho "Rancher local cluster detected, setting CLUSTERID to local."
@@ -505,7 +388,7 @@ if [[ "${CLUSTERID}" == "" ]]; then
 fi
 
 #Store /v3/clusterregistration output
-CLUSTERREGISTRATION=$(curlcmd -k -s ''${CATTLE_SERVER}'/v3/clusterregistrationtoken?clusterId='${CLUSTERID}'' -H 'content-type: application/json' -H "Authorization: Bearer ${LOGINTOKEN}")
+CLUSTERREGISTRATION=$(curl -k -s ''${CATTLE_SERVER}'/v3/clusterregistrationtoken?clusterId='${CLUSTERID}'' -H 'content-type: application/json' -H "Authorization: Bearer ${LOGINTOKEN}")
 checkpipecmd "Unable to store CLUSTERREGISTRATION, not sure what happened either.  Re-run script using bash -x for more information."
 checknullvar "${CLUSTERREGISTRATION}" "Unable to store CLUSTERREGISTRATION, not sure what happened either.  Re-run script using bash -x for more information." "exit1"
 
